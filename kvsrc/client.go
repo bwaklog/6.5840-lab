@@ -2,9 +2,8 @@ package kvsrv
 
 import (
 	"crypto/rand"
-	"errors"
-	"log"
 	"math/big"
+	"sync"
 
 	"6.5840/labrpc"
 )
@@ -12,6 +11,16 @@ import (
 type Clerk struct {
 	server *labrpc.ClientEnd
 	// You will have to modify this struct.
+	LamportClock int
+	ClientId     int64
+	mu           sync.Mutex
+}
+
+func (c *Clerk) incrementClock() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.LamportClock++
 }
 
 func nrand() int64 {
@@ -24,7 +33,9 @@ func nrand() int64 {
 func MakeClerk(server *labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
 	ck.server = server
+	ck.ClientId = nrand()
 	// You'll have to add code here.
+	ck.LamportClock = 0
 	return ck
 }
 
@@ -44,7 +55,12 @@ func (ck *Clerk) Get(key string) string {
 	args := GetArgs{Key: key}
 	reply := GetReply{}
 
-	ok := ck.server.Call("KVServer.Get", &args, &reply)
+	var ok bool
+	ok = false
+	for !ok {
+		ok = ck.server.Call("KVServer.Get", &args, &reply)
+	}
+
 	if ok {
 		return reply.Value
 	} else {
@@ -63,12 +79,21 @@ func (ck *Clerk) Get(key string) string {
 func (ck *Clerk) PutAppend(key string, value string, op string) string {
 	// You will have to modify this function.
 
-	args := PutAppendArgs{Key: key, Value: value}
+	ck.incrementClock()
+
+	args := PutAppendArgs{
+		Key:          key,
+		Value:        value,
+		LamportClock: ck.LamportClock,
+		ClientId:     ck.ClientId,
+	}
 	reply := PutAppendReply{}
 
-	ok := ck.server.Call("KVServer." + op, &args, &reply)
-	if !ok {
-		log.Fatalf("%v", errors.New("Failed to make PutAppend call to server"))
+	var ok bool
+	ok = false
+
+	for !ok {
+		ok = ck.server.Call("KVServer."+op, &args, &reply)
 	}
 
 	if op == "Append" {
